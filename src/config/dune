@@ -1,0 +1,10 @@
+; Build-time configurator. Probes the environment for Hexaly, picks
+; backend, and emits dune (:include) sexp files + a one-line
+; hexaly_shim.cpp that selects real or mock.
+;
+; This replaces the previous configure.sh — it's plain OCaml and runs on
+; every platform OCaml runs on (Linux, macOS, Windows, *BSD).
+
+(executable
+ (name discover)
+ (libraries dune-configurator))

@@ -1,0 +1,3 @@
+(executables
+ (names knapsack tsp scheduling multi_objective)
+ (libraries hexaly))
