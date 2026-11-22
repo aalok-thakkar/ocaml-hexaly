@@ -144,6 +144,7 @@ static int copy_string_out(const std::string& s, char* buf, int max_out) {
 }
 
 /* ---------- Version ---------- */
+extern "C" int  hxs_backend_is_mock(void)    { return 0; }
 extern "C" int  hxs_version_major(void)      { HXS_TRY return HxVersion::getMajorVersionNumber(); HXS_CATCH_RET(-1) }
 extern "C" int  hxs_version_minor(void)      { HXS_TRY return HxVersion::getMinorVersionNumber(); HXS_CATCH_RET(-1) }
 extern "C" int  hxs_version_code(void)       { HXS_TRY return HxVersion::getVersionCode();        HXS_CATCH_RET(-1) }

@@ -4,7 +4,7 @@ All notable changes to `ocaml-hexaly` will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-05-31
+## [0.1.0] - Unreleased
 
 First release. Working binding for the Hexaly Optimizer 14.5 C++ API.
 
@@ -22,6 +22,12 @@ First release. Working binding for the Hexaly Optimizer 14.5 C++ API.
 - **Typed errors**: `Hexaly_error of Error.code * string` with the 9-way
   `HxErrorCode` mirror.
 - **Callbacks**: `add_callback` / `remove_callback` with all 7 event types.
+  The optimizer owns its callbacks; the C side holds a closure as a GC
+  root only while `solve` runs, so an optimizer whose callback captures
+  it is still collected.
+- **Backend query**: `Hexaly.backend ()` returns `Real` or `Mock`.
+  `Hexaly.create` warns once on stderr when running on the mock unless
+  `HEXALY_BACKEND=mock` is set.
   Trampoline manages OCaml runtime lock across Hexaly's worker threads.
 - **Inconsistency analysis**: `compute_inconsistency` returning an
   `Inconsistency.t` with `nb_causes`, `cause`, `to_string`.
@@ -49,15 +55,15 @@ First release. Working binding for the Hexaly Optimizer 14.5 C++ API.
   single-machine scheduling via interval-var + pairwise non-overlap
   (optimum makespan 15).
 - **Benchmark**: `bench/build_million` measures 1M-expression model build.
-- **CI**: GitHub Actions matrix on macOS + Linux × OCaml 4.14 / 5.1 / 5.2
-  (mock backend).
+- **CI**: GitHub Actions matrix on macOS + Linux × OCaml 4.14 / 5
+  (mock backend); odoc deployed to GitHub Pages.
 
 ### Known limitations
-- No `lambdaFunction` / `range` / `array(range, lambda, default)` — the
+- No `lambdaFunction` / `range` / `array(range, lambda, default)`; the
   Pythonic Hexaly TSP idiom isn't expressible; TSP example unrolls.
 - No `HxExternalFunction` (custom evaluation callbacks during search).
 - `load_environment` accepts a different format than `save_environment`
-  produces — Hexaly's own limitation, documented in the .mli.
+  produces (a Hexaly limitation, documented in the .mli).
 
 ### Multi-objective phases (added post 0.1.0 scope)
 - `Hexaly.Phase` module bound: `create`, `get`, `nb_phases`,
@@ -72,7 +78,7 @@ First release. Working binding for the Hexaly Optimizer 14.5 C++ API.
 ### Cross-platform build (added post 0.1.0 scope)
 - Replaced the POSIX bash `configure.sh` with `src/config/discover.ml`,
   a portable OCaml configurator using `dune-configurator`. The same
-  source builds on Linux, macOS, Windows, and *BSD — no shell required.
+  source needs no shell. Tested on Linux and macOS; Windows untested.
 - Library auto-detection from `$HEXALY_HOME`, `/opt/hexaly_*`,
   `/Library/hexaly_*`, `$HOME/hexaly_*`, `C:/hexaly_*`,
   `$ProgramFiles/hexaly_*`.

@@ -24,11 +24,11 @@
     {1 Lifetimes and the GC}
 
     The user-facing types ([model], [param], [solution], [expr],
-    [Inconsistency.t], [callback]) are records that hold their parent so
-    OCaml's reachability analysis enforces the lifetime chain — drop the
-    optimizer and every descendant is invalidated; hold any descendant and
-    the optimizer survives. This costs one extra word per handle and
-    eliminates the most common use-after-free in C bindings.
+    [Inconsistency.t], [callback]) are records that hold their parent.
+    Holding any descendant keeps the optimizer alive; once nothing refers
+    to the optimizer or its descendants, the GC frees all of them. This
+    costs one word per handle and rules out using a handle after its
+    optimizer is freed.
 
     {1 Threading}
 
@@ -136,6 +136,18 @@ module Version : sig
   val set_license_content : string -> unit
 end
 
+(** {1 Backend} *)
+
+(** Which backend this build links. [Mock] is a brute-force test double
+    bundled for CI and contributors without a license; its [solve] only
+    handles tiny models and is not the Hexaly solver. *)
+type backend = Real | Mock
+
+(** The backend chosen at build time. On [Mock], {!create} prints a
+    one-time warning to [stderr] unless the environment variable
+    [HEXALY_BACKEND] is set to [mock]. *)
+val backend : unit -> backend
+
 (** {1 Lifecycle} *)
 
 (** Acquire a license token and create a fresh optimizer.
@@ -167,7 +179,7 @@ val nb_iterations : optimizer -> int64
     [hexaly] CLI and HexalyModeler.
 
     Note: as of Hexaly 14.5, the saved file is NOT a complete environment
-    snapshot — solver state and best solution are not round-tripped
+    snapshot: solver state and best solution are not round-tripped
     through {!load_environment}. For sharing/debugging models, this is the
     canonical export path.
 
@@ -255,22 +267,24 @@ val compute_inconsistency : optimizer -> Inconsistency.t
 
 (** {1 Callbacks} *)
 
-(** Opaque handle to a registered callback. The registration persists
-    for the lifetime of the program (or until {!remove_callback} is
-    called) regardless of whether the user retains this handle —
-    dropping the handle does NOT silently stop the callback firing. *)
+(** Opaque handle to a registered callback. The callback keeps firing
+    until {!remove_callback} is called or its optimizer is collected,
+    whether or not you keep this handle. A closure that captures its
+    optimizer does not keep that optimizer alive. *)
 type callback
 
 (** Register an OCaml closure to be invoked on every event of the given type
     during {!solve}. The closure receives [unit]; capture the [optimizer]
     in its closure if you need to inspect state.
 
-    Exceptions raised by the closure are caught and printed to [stderr] —
-    they cannot propagate into Hexaly's C++ without corrupting state.
+    Exceptions raised by the closure are caught and printed to [stderr],
+    because they cannot propagate through Hexaly's C++ code. To stop the
+    solve from a callback, call {!stop}.
 
     Example: print progress every 5 seconds during a long solve.
     {[
-      let last = ref 0.0 in
+      let start = Unix.gettimeofday () in
+      let last = ref start in
       let _cb = Hexaly.add_callback opt Hexaly.Callback_type.Time_ticked
         (fun () ->
           let now = Unix.gettimeofday () in
@@ -285,7 +299,8 @@ type callback
 val add_callback : optimizer -> Callback_type.t -> (unit -> unit) -> callback
 
 (** Remove a previously registered callback. Returns [true] if it was found
-    and removed. Safe to call multiple times. *)
+    and removed. Safe to call multiple times. Do not call it from inside a
+    callback. *)
 val remove_callback : callback -> bool
 
 (** {1 Decision variables} *)
@@ -302,8 +317,9 @@ val interval_var           : model -> int -> int -> expr
 (** Like {!interval_var} but the interval can be absent (length 0). *)
 val optional_interval_var  : model -> int -> int -> expr
 
-(** [list_var m n] creates a permutation decision over [\{0, ..., n-1\}].
-    Read via {!collection_value}. *)
+(** [list_var m n] creates a list decision: an ordered sequence of
+    distinct values from [\{0, ..., n-1\}]. The list may be partial; add
+    [count l = n] to force a permutation. Read via {!collection_value}. *)
 val list_var : model -> int -> expr
 
 (** [set_var m n] creates a subset decision over [\{0, ..., n-1\}].
@@ -480,7 +496,7 @@ val set_advanced_string : param -> string -> string -> unit
 module Syntax : sig
   (** [with_model m f] sets [m] as the implicit model for the operators
       below for the duration of [f]. Save the result of [f] (probably
-      a value or a side-effect) — do not let expressions escape outside
+      a value or a side-effect); do not let expressions escape outside
       [with_model] without binding them first. *)
   val with_model : model -> (unit -> 'a) -> 'a
 

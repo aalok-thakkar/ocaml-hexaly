@@ -93,6 +93,9 @@ hxs_error_code hxs_last_error_code(void);
 void           hxs_clear_error(void);
 
 /* ---------- Version / globals (static accessors on HxVersion) ---------- */
+/* 1 if this build links the bundled mock instead of libhexaly, else 0. */
+int  hxs_backend_is_mock(void);
+
 int  hxs_version_major(void);
 int  hxs_version_minor(void);
 int  hxs_version_code(void);

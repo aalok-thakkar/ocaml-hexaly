@@ -3,9 +3,8 @@
  * Lifetime invariant: every derived handle is wrapped in a record carrying
  * its parent. The OCaml reachability analysis enforces the lifetime chain. *)
 
-type optimizer
-
 (* Raw FFI handle types, never exposed to the user. *)
+type _opt_h
 type _model_h
 type _param_h
 type _solution_h
@@ -14,11 +13,21 @@ type _iis_h
 type _cb_h
 type _phs_h
 
+(* The optimizer owns its callbacks. The cycle optimizer -> callback ->
+   optimizer is ordinary OCaml data, so the GC can collect both once the
+   user drops them. C holds a callback's closure as a GC root only while
+   [solve] runs. *)
+type optimizer = {
+  _oh : _opt_h;
+  mutable _cbs : callback list;
+  mutable _solving : bool;
+}
+and callback = { _ch : _cb_h; _co : optimizer; _closure : unit -> unit }
+
 type model    = { _mh : _model_h;    _mo : optimizer }
 type param    = { _ph : _param_h;    _po : optimizer }
 type solution = { _sh : _solution_h; _so : optimizer }
 type expr     = { _eh : _expr_h;     _em : model }
-type callback = { _ch : _cb_h;       _co : optimizer; _closure : unit -> unit }
 
 (* ---------- Errors ---------- *)
 module Error = struct
@@ -141,22 +150,22 @@ module Version = struct
 end
 
 (* ---------- External primitives ---------- *)
-external optimizer_new          : unit -> optimizer        = "caml_hxs_optimizer_new"
-external optimizer_get_model    : optimizer -> _model_h    = "caml_hxs_optimizer_get_model"
-external optimizer_get_param    : optimizer -> _param_h    = "caml_hxs_optimizer_get_param"
-external optimizer_get_sol      : optimizer -> _solution_h = "caml_hxs_optimizer_get_solution"
-external optimizer_solve_       : optimizer -> unit        = "caml_hxs_optimizer_solve"
-external optimizer_stop_        : optimizer -> unit        = "caml_hxs_optimizer_stop"
-external optimizer_state_       : optimizer -> int         = "caml_hxs_optimizer_state"
-external optimizer_running_time_: optimizer -> int         = "caml_hxs_optimizer_running_time"
-external optimizer_nb_iters_    : optimizer -> int64       = "caml_hxs_optimizer_nb_iterations"
+external optimizer_new          : unit -> _opt_h        = "caml_hxs_optimizer_new"
+external optimizer_get_model    : _opt_h -> _model_h    = "caml_hxs_optimizer_get_model"
+external optimizer_get_param    : _opt_h -> _param_h    = "caml_hxs_optimizer_get_param"
+external optimizer_get_sol      : _opt_h -> _solution_h = "caml_hxs_optimizer_get_solution"
+external optimizer_solve_       : _opt_h -> unit        = "caml_hxs_optimizer_solve"
+external optimizer_stop_        : _opt_h -> unit        = "caml_hxs_optimizer_stop"
+external optimizer_state_       : _opt_h -> int         = "caml_hxs_optimizer_state"
+external optimizer_running_time_: _opt_h -> int         = "caml_hxs_optimizer_running_time"
+external optimizer_nb_iters_    : _opt_h -> int64       = "caml_hxs_optimizer_nb_iterations"
 
-external optimizer_save_env_ : optimizer -> string -> unit = "caml_hxs_optimizer_save_environment"
-external optimizer_load_env_ : optimizer -> string -> unit = "caml_hxs_optimizer_load_environment"
+external optimizer_save_env_ : _opt_h -> string -> unit = "caml_hxs_optimizer_save_environment"
+external optimizer_load_env_ : _opt_h -> string -> unit = "caml_hxs_optimizer_load_environment"
 
-external optimizer_create_phase_ : optimizer -> _phs_h     = "caml_hxs_optimizer_create_phase"
-external optimizer_get_phase_    : optimizer -> int -> _phs_h = "caml_hxs_optimizer_get_phase"
-external optimizer_nb_phases_    : optimizer -> int        = "caml_hxs_optimizer_nb_phases"
+external optimizer_create_phase_ : _opt_h -> _phs_h     = "caml_hxs_optimizer_create_phase"
+external optimizer_get_phase_    : _opt_h -> int -> _phs_h = "caml_hxs_optimizer_get_phase"
+external optimizer_nb_phases_    : _opt_h -> int        = "caml_hxs_optimizer_nb_phases"
 external phs_set_time_limit_     : _phs_h -> int   -> unit = "caml_hxs_phase_set_time_limit"
 external phs_get_time_limit_     : _phs_h -> int          = "caml_hxs_phase_get_time_limit"
 external phs_set_iter_limit_     : _phs_h -> int64 -> unit = "caml_hxs_phase_set_iteration_limit"
@@ -167,13 +176,15 @@ external phs_set_enabled_        : _phs_h -> bool  -> unit = "caml_hxs_phase_set
 external phs_is_enabled_         : _phs_h -> bool         = "caml_hxs_phase_is_enabled"
 external phs_to_string_          : _phs_h -> string       = "caml_hxs_phase_to_string"
 
-external optimizer_compute_iis_ : optimizer -> _iis_h     = "caml_hxs_optimizer_compute_inconsistency"
+external optimizer_compute_iis_ : _opt_h -> _iis_h     = "caml_hxs_optimizer_compute_inconsistency"
 external iis_nb_causes_         : _iis_h -> int           = "caml_hxs_inconsistency_nb_causes"
 external iis_cause_             : _iis_h -> int -> _expr_h = "caml_hxs_inconsistency_cause"
 external iis_to_string_         : _iis_h -> string        = "caml_hxs_inconsistency_to_string"
 
-external optimizer_add_callback_    : optimizer -> int -> (unit -> unit) -> _cb_h = "caml_hxs_optimizer_add_callback"
-external optimizer_remove_callback_ : optimizer -> _cb_h -> bool = "caml_hxs_optimizer_remove_callback"
+external optimizer_add_callback_    : _opt_h -> int -> _cb_h = "caml_hxs_optimizer_add_callback"
+external optimizer_remove_callback_ : _opt_h -> _cb_h -> bool = "caml_hxs_optimizer_remove_callback"
+external callback_pin_   : _cb_h -> (unit -> unit) -> unit = "caml_hxs_callback_pin"
+external callback_unpin_ : _cb_h -> unit = "caml_hxs_callback_unpin"
 
 external m_bool_var          : _model_h -> _expr_h               = "caml_hxs_model_bool_var"
 external m_int_var           : _model_h -> int -> int -> _expr_h = "caml_hxs_model_int_var"
@@ -233,19 +244,53 @@ external p_set_dot             : _param_h -> int -> float -> unit = "caml_hxs_pa
 
 (* ---------- Public API ---------- *)
 
-let create     = optimizer_new
-let model    o = { _mh = optimizer_get_model o; _mo = o }
-let param    o = { _ph = optimizer_get_param o; _po = o }
-let solution o = { _sh = optimizer_get_sol   o; _so = o }
-let solve      = optimizer_solve_
-let stop       = optimizer_stop_
+type backend = Real | Mock
 
-let state         o = State.of_int (optimizer_state_ o)
-let running_time  o = optimizer_running_time_ o
-let nb_iterations o = optimizer_nb_iters_ o
+external backend_is_mock_ : unit -> bool = "caml_hxs_backend_is_mock"
 
-let save_environment = optimizer_save_env_
-let load_environment = optimizer_load_env_
+let backend () = if backend_is_mock_ () then Mock else Real
+
+let mock_warned = ref false
+
+let warn_if_unexpected_mock () =
+  if backend () = Mock && not !mock_warned
+     && Sys.getenv_opt "HEXALY_BACKEND" <> Some "mock" then begin
+    mock_warned := true;
+    prerr_endline
+      "hexaly: warning: built against the bundled mock backend, not the \
+       Hexaly solver. Results are from a brute-force test double. Install \
+       Hexaly and reinstall this package (see README), or set \
+       HEXALY_BACKEND=mock to silence this warning."
+  end
+
+let create () =
+  warn_if_unexpected_mock ();
+  { _oh = optimizer_new (); _cbs = []; _solving = false }
+let model    o = { _mh = optimizer_get_model o._oh; _mo = o }
+let param    o = { _ph = optimizer_get_param o._oh; _po = o }
+let solution o = { _sh = optimizer_get_sol   o._oh; _so = o }
+
+let pin_callback   cb = callback_pin_ cb._ch cb._closure
+let unpin_callback cb = callback_unpin_ cb._ch
+
+let unpin_all o =
+  List.iter unpin_callback o._cbs;
+  o._solving <- false
+
+let solve o =
+  o._solving <- true;
+  List.iter pin_callback o._cbs;
+  Fun.protect ~finally:(fun () -> unpin_all o)
+    (fun () -> optimizer_solve_ o._oh)
+
+let stop o = optimizer_stop_ o._oh
+
+let state         o = State.of_int (optimizer_state_ o._oh)
+let running_time  o = optimizer_running_time_ o._oh
+let nb_iterations o = optimizer_nb_iters_ o._oh
+
+let save_environment o path = optimizer_save_env_ o._oh path
+let load_environment o path = optimizer_load_env_ o._oh path
 
 let wrap m h = { _eh = h; _em = m }
 
@@ -377,9 +422,9 @@ let set_advanced_string p k v = p_set_adv_str p._ph k v
 module Phase = struct
   type t = { _ph : _phs_h; _po : optimizer }
 
-  let create o = { _ph = optimizer_create_phase_ o; _po = o }
-  let get o i  = { _ph = optimizer_get_phase_ o i; _po = o }
-  let nb_phases = optimizer_nb_phases_
+  let create o = { _ph = optimizer_create_phase_ o._oh; _po = o }
+  let get o i  = { _ph = optimizer_get_phase_ o._oh i; _po = o }
+  let nb_phases o = optimizer_nb_phases_ o._oh
 
   let set_time_limit p v          = phs_set_time_limit_ p._ph v
   let time_limit p                = phs_get_time_limit_ p._ph
@@ -404,29 +449,24 @@ module Inconsistency = struct
 end
 
 let compute_inconsistency o =
-  { Inconsistency._ih = optimizer_compute_iis_ o; _io = o }
+  { Inconsistency._ih = optimizer_compute_iis_ o._oh; _io = o }
 
 (* ---------- Callbacks ----------
-   Lifetime: a registered callback persists until either (a) the user
-   explicitly calls [remove_callback], or (b) the program exits. The
-   OCaml-side [callback] record is intentionally kept reachable by a
-   private global list so users don't have to retain the returned handle
-   to keep the callback firing. (Without this, the OCaml GC would
-   finalize an unreferenced handle, the C finalizer would call
-   [hxs_optimizer_remove_callback], and the callback would silently
-   stop firing — a violation of least surprise.) *)
-let _alive_callbacks : callback list ref = ref []
-
+   Lifetime: a registered callback fires until [remove_callback] is called
+   or its optimizer is collected. The optimizer's [_cbs] list keeps the
+   callback record reachable, so users need not retain the returned
+   handle. *)
 let add_callback opt cb_type closure =
-  let h = optimizer_add_callback_ opt (Callback_type.to_int cb_type) closure in
+  let h = optimizer_add_callback_ opt._oh (Callback_type.to_int cb_type) in
   let cb = { _ch = h; _co = opt; _closure = closure } in
-  _alive_callbacks := cb :: !_alive_callbacks;
+  opt._cbs <- cb :: opt._cbs;
+  if opt._solving then pin_callback cb;
   cb
 
 let remove_callback cb =
-  let removed = optimizer_remove_callback_ cb._co cb._ch in
-  if removed then
-    _alive_callbacks := List.filter (fun c -> not (c == cb)) !_alive_callbacks;
+  let o = cb._co in
+  let removed = optimizer_remove_callback_ o._oh cb._ch in
+  o._cbs <- List.filter (fun c -> not (c == cb)) o._cbs;
   removed
 
 (* ---------- Syntax ---------- *)

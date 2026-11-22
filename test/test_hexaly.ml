@@ -855,6 +855,67 @@ let test_callback_captures_optimizer () =
   Alcotest.(check bool) "captured a state string" true
     (String.length !captured > 0)
 
+(* Build, solve and drop an optimizer whose callback captures it. Kept at
+   top level so no stack slot of the caller refers to the optimizer. *)
+let solve_and_drop_optimizer_with_callback finalised =
+  let o = mk_opt () in
+  let _ = Hexaly.add_callback o Hexaly.Callback_type.Optimization_ended
+    (fun () -> ignore (Hexaly.state o))
+  in
+  let m = Hexaly.model o in
+  let x = Hexaly.bool_var m in
+  Hexaly.maximize m x;
+  Hexaly.close m;
+  Hexaly.solve o;
+  Gc.finalise (fun _ -> incr finalised) o
+
+(* Regression: callbacks used to be pinned in a global list, so an
+   optimizer with a never-removed callback was never freed. *)
+let test_callback_does_not_leak_optimizer () =
+  let finalised = ref 0 in
+  for _ = 1 to 20 do solve_and_drop_optimizer_with_callback finalised done;
+  Gc.full_major ();
+  Gc.full_major ();
+  Alcotest.(check bool) "optimizers with callbacks are collected" true
+    (!finalised >= 19)
+
+let register_and_drop_callback o fired =
+  ignore (Hexaly.add_callback o Hexaly.Callback_type.Optimization_ended
+            (fun () -> incr fired))
+
+(* The optimizer keeps the callback alive: dropping the handle must not
+   stop it firing. *)
+let test_callback_survives_dropped_handle () =
+  let o = mk_opt () in
+  let fired = ref 0 in
+  register_and_drop_callback o fired;
+  Gc.full_major ();
+  let m = Hexaly.model o in
+  let x = Hexaly.bool_var m in
+  Hexaly.maximize m x;
+  Hexaly.close m;
+  Hexaly.solve o;
+  Alcotest.(check int) "callback fired once" 1 !fired
+
+let test_backend_matches_env () =
+  let expected = if is_mock () then Hexaly.Mock else Hexaly.Real in
+  Alcotest.(check bool) "backend () matches HEXALY_BACKEND" true
+    (Hexaly.backend () = expected)
+
+(* Regression: on the mock, a caught error used to leave a stale error
+   behind, so the next [status] call raised it again. *)
+let test_status_after_caught_error () =
+  let o = mk_opt () in
+  let m = Hexaly.model o in
+  let x = Hexaly.bool_var m in
+  Hexaly.maximize m x;
+  Hexaly.close m;
+  let sol = Hexaly.solution o in
+  (try ignore (Hexaly.int_value sol x) with Hexaly.Hexaly_error _ -> ());
+  Hexaly.solve o;
+  Alcotest.(check bool) "status does not raise" true
+    (Hexaly.status (Hexaly.solution o) = Hexaly.Status.Optimal)
+
 let test_callback_exception_does_not_crash () =
   let o = mk_opt () in
   let _ = Hexaly.add_callback o Hexaly.Callback_type.Optimization_started
@@ -1224,6 +1285,10 @@ let () =
       Alcotest.test_case "double remove idempotent" `Quick test_callback_double_remove;
       Alcotest.test_case "captures optimizer"      `Quick test_callback_captures_optimizer;
       Alcotest.test_case "exception caught"        `Quick test_callback_exception_does_not_crash;
+      Alcotest.test_case "no optimizer leak"       `Quick test_callback_does_not_leak_optimizer;
+      Alcotest.test_case "backend matches env"     `Quick test_backend_matches_env;
+      Alcotest.test_case "status after caught error" `Quick test_status_after_caught_error;
+      Alcotest.test_case "survives dropped handle" `Quick test_callback_survives_dropped_handle;
     ];
     "phases", [
       Alcotest.test_case "create + inspect"        `Quick test_phases_create_and_inspect;
