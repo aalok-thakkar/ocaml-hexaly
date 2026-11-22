@@ -162,7 +162,11 @@ let emit_mock c =
   write_file "cxx_flags.sexp"       "()\n";
   write_file "c_library_flags.sexp" (sexp_list cxxrt);
   write_file "hexaly_shim.cpp"      (shim_include `Mock);
-  prerr_endline "configure: backend=mock (Hexaly not installed)"
+  let why = match getenv "HEXALY_BACKEND" with
+    | Some "mock" -> "HEXALY_BACKEND=mock"
+    | _ -> "no Hexaly install found; set HEXALY_HOME to use the real solver"
+  in
+  prerr_endline ("configure: backend=mock (" ^ why ^ ")")
 
 let () =
   C.main ~name:"hexaly-discover" (fun c ->

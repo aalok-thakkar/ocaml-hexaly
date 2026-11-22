@@ -1,6 +1,6 @@
 # Design notes: ocaml-hexaly
 
-This document covers the non-obvious design decisions in the binding —
+This document covers the non-obvious design decisions in the binding:
 the ones that took multiple iterations to get right, and the ones that
 will matter if you extend it.
 
@@ -37,7 +37,7 @@ Why two backends:
 - **Mock** is a tiny in-process brute-force solver. It's there so the
   binding compiles and the test suite runs on any CI worker (no license
   needed). The mock implements the same `extern "C"` ABI as the real
-  shim. `configure.sh` writes a one-line `hexaly_shim.cpp` that includes
+  shim. `src/config/discover.ml` writes a one-line `hexaly_shim.cpp` that includes
   one of them.
 
 ## 2. Lifetime invariant
@@ -45,8 +45,8 @@ Why two backends:
 A naive binding looks like:
 
 ```ocaml
-type model     (* abstract — a raw FFI handle *)
-type expr      (* abstract — a raw FFI handle *)
+type model     (* abstract: a raw FFI handle *)
+type expr      (* abstract: a raw FFI handle *)
 
 external get_model : optimizer -> model = "..."
 ```
@@ -61,8 +61,8 @@ let x   = Hexaly.bool_var m in
 ```
 
 OCaml's GC is free to finalize `opt` because nothing references it from
-OCaml-side code. But Hexaly's `HxModel` is owned by the `HexalyOptimizer`
-— its underlying memory just got freed. The next call through `m` or `x`
+OCaml-side code. But Hexaly's `HxModel` is owned by the `HexalyOptimizer`,
+so its underlying memory has been freed. The next call through `m` or `x`
 is a use-after-free.
 
 This binding fixes it by making every derived handle a record carrying
@@ -80,8 +80,8 @@ can't be GC'd while any descendant is live. Dropping the optimizer
 naturally invalidates the chain.
 
 Cost: one extra word per handle. A million expressions in a model takes
-8 MB of OCaml heap (compared to 0 if the user disciplined themselves —
-which they wouldn't).
+8 MB of OCaml heap (compared to 0 if the user disciplined themselves,
+which they would not).
 
 The GC-pressure test in [`test/test_hexaly.ml`](../test/test_hexaly.ml)
 caught this bug originally.
@@ -124,7 +124,7 @@ Two pitfalls:
 
 ### Pitfall 1: OCaml's runtime lock
 
-OCaml's runtime is single-threaded at the bytecode level — only one thread
+OCaml's runtime is single-threaded at the bytecode level: only one thread
 can be executing OCaml code at a time, gated by a per-domain mutex called
 the "runtime lock". A C function called from OCaml holds the lock by
 default.
@@ -163,15 +163,24 @@ heap, stores the closure value in it, and registers `&box->closure` as a
 generational global root. The trampoline reads through the root, which
 GC keeps stable.
 
-When the OCaml-side callback handle is finalized, we unregister the root,
-free the box, and tell Hexaly to drop the callback. The lifetime
-invariant (callback record holds the optimizer) guarantees the optimizer
-outlives the callback handle.
+The root is registered only while `solve` runs: `Hexaly.solve` pins every
+callback of the optimizer before calling into Hexaly and unpins them
+afterwards. A permanent root would keep the closure alive, and a closure
+that captures its optimizer (the common case) would then keep the
+optimizer alive forever. Outside `solve`, the optimizer record owns its
+callback records and each callback record holds its optimizer; that
+cycle is plain OCaml data, so the GC collects it.
+
+The box finalizer only unregisters the root (if pinned) and frees the box.
+It must not call into the optimizer: when an optimizer and its callbacks
+become unreachable together, finalizers run in no particular order, so
+the optimizer may already be freed. `hxs_optimizer_free` drops the
+shim-side callbacks itself.
 
 ### Pitfall 4: user-callback exceptions
 
 If the user's OCaml closure raises, the exception must NOT propagate into
-Hexaly's C++ — that would unwind across the ABI boundary and corrupt
+Hexaly's C++, because that would unwind across the ABI boundary and corrupt
 state.
 
 **Fix**: the trampoline uses `caml_callback_exn` (the non-throwing
@@ -183,7 +192,7 @@ users wrap their callbacks in `try ... with _ -> ()` if they care.
 
 Building a model with N expression nodes through a naive binding does N
 FFI crossings. At 100 ns each (a generous ctypes estimate), 1M nodes is
-100 ms of pure FFI overhead — measurable.
+100 ms of pure FFI overhead.
 
 We batch: `hxs_model_create_expression` takes an array of operand
 handles + an array of int leaf constants + an array of float leaf
@@ -215,7 +224,7 @@ The mock is a binding test fixture, not a real solver. It implements:
 - **Approximated**: interval (always returns a degenerate [lo, lo)
   point), list/set (always returns identity [0..n-1]). The brute force
   can't enumerate permutations / interval combinations efficiently.
-- **Unmodeled**: math functions (sqrt, log, etc.) — return 0 to avoid
+- **Unmodeled**: math functions (sqrt, log, etc.) return 0 to avoid
   recursion. Tests for these skip on mock.
 
 The mock fires `Optimization_started` / `Optimization_ended` callbacks
@@ -226,7 +235,7 @@ backends.
 
 OCaml runs on Linux, macOS, Windows, and the BSDs. So should the binding.
 But many bindings end up with `configure.sh` calling `uname`, `pkg-config`,
-shell glob expansion — none of which work on Windows without WSL/Cygwin.
+shell glob expansion, none of which work on Windows without WSL/Cygwin.
 
 This binding uses **`dune-configurator`** instead. The configurator is
 plain OCaml (`src/config/discover.ml`). It:
@@ -248,16 +257,16 @@ The dune rule that runs it is one line:
 (rule (targets ...) (deps ...) (action (run %{dep:config/discover.exe})))
 ```
 
-Result: same build pipeline, no shell dependency, Windows works out of
-the box (modulo getting Hexaly itself installed on Windows, which is
-an upstream concern).
+Result: one build pipeline with no shell dependency. The configurator
+handles Windows paths and library names, but the Windows build has not
+been tested.
 
 ## 8. What's not bound (and why)
 
 - **`HxExternalFunction`**: registering OCaml as a black-box evaluator
   inside a Hexaly expression. Same lock-dance pattern as callbacks but
   stateful (Hexaly may call the function thousands of times per
-  iteration). Needs more careful perf engineering — defer.
+  iteration). Needs more careful perf engineering; deferred.
 - **`lambdaFunction` / `range`**: Hexaly's array-comprehension idiom
   used in their canonical TSP. Compiles to closures registered with
   Hexaly. Same complexity as external functions. Defer.
@@ -281,4 +290,4 @@ The 190 ns/node figure is the binding-overhead ceiling. For comparison,
 ctypes is typically 1–3 µs/call; raw cpython is ~600 ns/call.
 
 The Hexaly C++ engine's perf is invariant to which language binding
-you use — every binding ends up in the same `libhexaly` solve loop.
+you use: every binding ends up in the same `libhexaly` solve loop.

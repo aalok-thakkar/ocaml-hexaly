@@ -98,42 +98,53 @@ DEFINE_HANDLE(prm,  hxs_param,         hxs_param_free)
 DEFINE_HANDLE(iis,  hxs_inconsistency, hxs_inconsistency_free)
 DEFINE_HANDLE(phs,  hxs_phase,         hxs_phase_free)
 
-/* ---------- Callback box + finalizer ---------- */
+/* ---------- Callback box + finalizer ----------
+ * The closure is registered as a GC root only while [solve] runs (see
+ * [Hexaly.solve], which pins and unpins). Outside [solve] nothing on the C
+ * side references the closure, so a closure that captures its optimizer
+ * does not keep that optimizer alive. */
 typedef struct {
-    value          closure;   /* registered as generational global root */
-    hxs_callback*  shim;      /* Hexaly's callback handle */
-    hxs_optimizer* owner;     /* still alive: OCaml record holds it */
+    value          closure;   /* 0 when unpinned; else a generational root */
+    hxs_callback*  shim;      /* Hexaly's callback handle; NULL once removed */
+    hxs_optimizer* owner;
 } CallbackBox;
 
 static void cb_trampoline(hxs_optimizer* opt, hxs_callback_type type, void* userdata) {
     (void)opt; (void)type;
     CallbackBox* box = (CallbackBox*)userdata;
-    if (!box || !box->closure) return;
-    /* Register defensively — idempotent on already-registered threads. */
+    if (!box) return;
+    /* Register defensively; idempotent on already-registered threads. */
     caml_c_thread_register();
     caml_acquire_runtime_system();
-    value result = caml_callback_exn(box->closure, Val_unit);
-    if (Is_exception_result(result)) {
-        fprintf(stderr, "Hexaly: user callback raised an exception (suppressed)\n");
+    /* Read the root only while holding the runtime lock: the GC may move it. */
+    if (box->closure) {
+        value result = caml_callback_exn(box->closure, Val_unit);
+        if (Is_exception_result(result)) {
+            fprintf(stderr, "Hexaly: user callback raised an exception (suppressed)\n");
+        }
     }
     caml_release_runtime_system();
 }
 
-static void callback_box_finalize(CallbackBox* box) {
-    if (!box) return;
-    /* Remove from Hexaly first so it can't fire after we free the box. */
-    if (box->owner && box->shim) {
-        hxs_optimizer_remove_callback(box->owner, box->shim);
-    }
+static void callback_unpin(CallbackBox* box) {
     if (box->closure) {
         caml_remove_generational_global_root(&box->closure);
         box->closure = 0;
     }
+}
+
+/* Must not call into the owner: when the optimizer and its callbacks become
+ * unreachable together, finalizers run in no particular order and the owner
+ * may already be freed. hxs_optimizer_free drops the shim-side callbacks. */
+static void callback_box_finalize(CallbackBox* box) {
+    if (!box) return;
+    callback_unpin(box);
     free(box);
 }
 DEFINE_HANDLE(cb, CallbackBox, callback_box_finalize)
 
 /* ---------- Version ---------- */
+CAMLprim value caml_hxs_backend_is_mock(value unit) { (void)unit; return Val_bool(hxs_backend_is_mock()); }
 CAMLprim value caml_hxs_version_major(value unit) { (void)unit; return Val_int(hxs_version_major()); }
 CAMLprim value caml_hxs_version_minor(value unit) { (void)unit; return Val_int(hxs_version_minor()); }
 CAMLprim value caml_hxs_version_code (value unit) { (void)unit; return Val_int(hxs_version_code()); }
@@ -338,25 +349,38 @@ CAMLprim value caml_hxs_inconsistency_to_string(value v) {
 }
 
 /* ---------- Callbacks ---------- */
-CAMLprim value caml_hxs_optimizer_add_callback(
-    value v_opt, value v_type, value v_closure)
+CAMLprim value caml_hxs_optimizer_add_callback(value v_opt, value v_type)
 {
-    CAMLparam3(v_opt, v_type, v_closure);
+    CAMLparam2(v_opt, v_type);
     CallbackBox* box = (CallbackBox*)calloc(1, sizeof(CallbackBox));
     if (!box) caml_failwith("Hexaly.add_callback: out of memory");
-    box->closure = v_closure;
-    box->owner   = opt_get(v_opt);
-    caml_register_generational_global_root(&box->closure);
+    box->owner = opt_get(v_opt);
     hxs_callback* shim = hxs_optimizer_add_callback(
         box->owner, (hxs_callback_type)Int_val(v_type),
         cb_trampoline, box);
     if (!shim) {
-        caml_remove_generational_global_root(&box->closure);
         free(box);
         raise_hexaly_error("Hexaly.add_callback");
     }
     box->shim = shim;
     CAMLreturn(cb_alloc(box));
+}
+
+CAMLprim value caml_hxs_callback_pin(value v_cb, value v_closure) {
+    CAMLparam2(v_cb, v_closure);
+    CallbackBox* box = cb_get(v_cb);
+    if (box && box->shim && !box->closure) {
+        box->closure = v_closure;
+        caml_register_generational_global_root(&box->closure);
+    }
+    CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_hxs_callback_unpin(value v_cb) {
+    CAMLparam1(v_cb);
+    CallbackBox* box = cb_get(v_cb);
+    if (box) callback_unpin(box);
+    CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_hxs_optimizer_remove_callback(value v_opt, value v_cb) {
@@ -367,8 +391,9 @@ CAMLprim value caml_hxs_optimizer_remove_callback(value v_opt, value v_cb) {
     int removed = 0;
     if (box->shim && box->owner) {
         removed = hxs_optimizer_remove_callback(box->owner, box->shim);
-        box->shim = NULL; /* finalizer won't double-remove */
+        box->shim = NULL;
     }
+    callback_unpin(box);
     CAMLreturn(Val_bool(removed));
 }
 
@@ -540,6 +565,7 @@ CAMLprim value caml_hxs_solution_float_value(value v_s, value v_e) {
 }
 CAMLprim value caml_hxs_solution_status(value v_s) {
     CAMLparam1(v_s);
+    hxs_clear_error();
     hxs_solution_status r = hxs_solution_get_status(sol_get(v_s));
     if (hxs_last_error()) raise_hexaly_error("Hexaly.status");
     CAMLreturn(Val_int((int)r));

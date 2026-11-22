@@ -6,16 +6,16 @@
 [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://aalok-thakkar.github.io/ocaml-hexaly)
 
 OCaml bindings for **[Hexaly Optimizer](https://www.hexaly.com/)** (formerly
-LocalSolver) — a commercial mathematical optimization solver supporting
-mixed-integer linear / nonlinear programming, constraint programming, and the
-specialized decision variables (interval, list, set) that make Hexaly the
-solver of choice for industrial scheduling and routing problems.
+LocalSolver), a commercial mathematical optimization solver. Hexaly handles
+mixed-integer linear and nonlinear programming and constraint programming,
+and has interval, list and set decision variables for scheduling and
+routing problems.
 
 ```ocaml
 let opt = Hexaly.create () in
 let m   = Hexaly.model opt in
 
-let route = Hexaly.list_var m n in              (* permutation of 0..n-1 *)
+let route = Hexaly.list_var m n in              (* distinct values from 0..n-1 *)
 let total = Hexaly.sum m (List.init n (fun k ->
   let i = Hexaly.at m route [Hexaly.int_const m k] in
   let j = Hexaly.at m route [Hexaly.int_const m ((k + 1) mod n)] in
@@ -32,37 +32,32 @@ Printf.printf "Optimal tour length: %d\n" (Hexaly.int_value (Hexaly.solution opt
 Array.iter (Printf.printf " %d") tour
 ```
 
-## Why use this binding
+## Features
 
-- **Complete API.** Every Hexaly modeling primitive is bound: bool / int /
-  float / interval / list / set decisions; arithmetic, math, comparison,
-  boolean, conditional, array, and scheduling operators; constraints;
-  single- and multi-objective optimization; warm start; inconsistency
-  analysis; callbacks; environment export. The hot path (expression
-  construction) is batched so a 1000-operand sum crosses FFI once, not
-  1001 times.
-- **Idiomatic OCaml.** Typed errors (`Hexaly_error of Error.code * string`),
-  pretty printers for every enum, opaque types that prevent dangling
-  references via the GC's reachability analysis, an operator-syntax
-  submodule for terse modeling.
-- **Production-grade.** 73-test alcotest suite passing on real Hexaly 14.5;
-  52-test subset passing on a bundled mock backend so contributors without
-  a license can still build, test, and hack. ~190 ns / expression node
-  on Apple Silicon.
-- **Portable.** Linux, macOS (Intel + Apple Silicon), Windows. The build
-  configurator is plain OCaml using `dune-configurator` — no shell
-  scripts.
+- **Modeling.** Bool, int, float, interval, list and set decisions;
+  arithmetic, math, comparison, boolean, conditional, array, collection
+  and interval operators; constraints; single- and multi-objective
+  optimization; warm start; inconsistency analysis; callbacks; model
+  export. See [Not yet bound](#not-yet-bound) for what is missing.
+  Expression construction is batched, so a 1000-operand sum crosses the
+  FFI once.
+- **OCaml interface.** Typed errors (`Hexaly_error of Error.code * string`),
+  pretty printers for every enum, handles whose lifetimes the GC manages,
+  and an operator-syntax submodule.
+- **Tests.** 77 alcotest cases pass on Hexaly 14.5; 56 of them also run on
+  a bundled mock backend, so contributors without a license can build and
+  test.
+- **Build.** The configurator is plain OCaml using `dune-configurator`.
 
 ## Status
 
 | Aspect                       | State                                     |
 | ---------------------------- | ----------------------------------------- |
-| Hexaly version supported     | 14.5                                       |
-| Test coverage                | 73 alcotest cases (real) / 52 (mock)      |
-| Platforms                    | Linux, macOS Intel, macOS Apple Silicon, Windows |
-| Memory safety                | Hand-written stubs, GC-aware lifetimes    |
-| Thread safety (callbacks)    | Runtime-lock dance for Hexaly worker threads |
-| API stability                | 0.1.0 — pre-1.0, expect minor additions   |
+| Hexaly version supported     | 14.5                                      |
+| Tests                        | 77 alcotest cases (real) / 56 (mock)      |
+| Tested platforms             | macOS arm64 (real and mock); Linux and macOS in CI (mock) |
+| Windows                      | The configurator looks for Windows installs; untested |
+| API stability                | 0.1.0, pre-1.0; expect additions          |
 
 ## Installation
 
@@ -70,7 +65,12 @@ Array.iter (Printf.printf " %d") tour
 opam install hexaly
 ```
 
-That builds against the bundled mock backend (no Hexaly install required).
+The build looks for a Hexaly install. If it finds one it links the real
+solver; otherwise it builds the bundled **mock backend**. The mock is a
+brute-force test double for small models, not a solver. `Hexaly.backend ()`
+reports which one you got, and `Hexaly.create` prints a one-time warning on
+the mock unless `HEXALY_BACKEND=mock` is set.
+
 To link against the real solver:
 
 1. Install Hexaly from <https://www.hexaly.com/download> (free 30-day trial
@@ -83,12 +83,13 @@ To link against the real solver:
    opam reinstall hexaly                          # rebuilds against the real backend
    ```
 
-The build configurator auto-detects installs under `/opt/hexaly_*`,
-`/Library/hexaly_*`, `$HOME/hexaly_*`, `C:/hexaly_*`, and
-`$ProgramFiles/hexaly_*`, so `HEXALY_HOME` is optional if you used the
-default install location.
+The configurator also searches `/opt/hexaly_*`, `/Library/hexaly_*`,
+`/usr/local/hexaly_*`, `$HOME/hexaly_*`, `C:/hexaly_*` and
+`$ProgramFiles/hexaly_*`, so `HEXALY_HOME` is optional if Hexaly is in a
+default location. Set `HEXALY_BACKEND=real` to make the build fail instead
+of falling back to the mock.
 
-To force the mock backend explicitly:
+To force the mock backend:
 ```sh
 HEXALY_BACKEND=mock opam reinstall hexaly
 ```
@@ -113,16 +114,17 @@ let x  = bool_var m in
 let y  = int_var m 0 100 in
 let f  = float_var m 0.0 1.0 in
 let iv = interval_var m 0 50 in        (* scheduling: a time window *)
-let pe = list_var m 10 in              (* routing: a permutation *)
+let pe = list_var m 10 in              (* routing: an ordered list *)
 let s  = set_var m 10 in               (* a subset *)
 
-(* Arithmetic, math, logical, conditional — all available. *)
+(* Arithmetic, math, logical and conditional operators. *)
 let e = if_ m
   (gt m y (int_const m 50))
   (mul m x y)
   (sum m [x; y])
 in
 add_constraint m (leq m e (int_const m 1000));
+add_constraint m (leq m (count m s) (int_const m 3));
 
 (* Multi-objective: declare them in priority order. *)
 minimize m (length m iv);   (* obj 0 *)
@@ -153,8 +155,10 @@ match status sol with
   Printf.printf "x=%d  y=%d  f=%f\n" (int_value sol x) (int_value sol y) (float_value sol f);
   let (a, b) = interval_value sol iv in
   Printf.printf "interval = [%d, %d)\n" a b;
-  let perm = collection_value sol pe in
-  Array.iter (Printf.printf " %d") perm
+  Array.iter (Printf.printf " %d") (collection_value sol pe);
+  print_newline ();
+  Array.iter (Printf.printf " %d") (collection_value sol s);
+  print_newline ()
 | Status.Infeasible ->
   let iis = compute_inconsistency opt in
   Printf.eprintf "infeasible (%d causes):\n%s\n"
@@ -173,7 +177,6 @@ try
   Hexaly.solve opt
 with Hexaly.Hexaly_error (code, msg) ->
   match code with
-  | Hexaly.Error.License  -> Printf.eprintf "License problem: %s\n" msg
   | Hexaly.Error.Model    -> Printf.eprintf "Modeling bug: %s\n" msg
   | Hexaly.Error.Solver   -> Printf.eprintf "Solver gave up: %s\n" msg
   | Hexaly.Error.Api      -> Printf.eprintf "API misuse: %s\n" msg
@@ -182,6 +185,9 @@ with Hexaly.Hexaly_error (code, msg) ->
 
 The 9 codes mirror Hexaly's `HxErrorCode`:
 `Api | File | Model | Callback | License | Solver | Internal | Modeler | Cloud`.
+The code is whatever Hexaly reports. In 14.5, a missing license file makes
+`Hexaly.create` raise `Internal` (with a "Cannot open file" message), not
+`License`.
 
 ## Examples
 
@@ -205,19 +211,18 @@ dune exec examples/multi_objective.exe
 
 ## Performance
 
-The library is designed so the FFI boundary is never the bottleneck.
+Measured with `bench/build_million.ml` on an Apple Silicon Mac with
+Hexaly 14.5 (timings vary by about 30% between runs):
 
-| Operation (on 2026 Apple Silicon, Hexaly 14.5)  | Time     | Per-unit         |
-| ----------------------------------------------- | -------- | ---------------- |
-| Create 1000 int vars                            | < 1 ms   | < 1 µs / var     |
-| Build 1M expression nodes                       | 187 ms   | **~190 ns / node** |
-| `close` (Hexaly model compilation)              | 541 ms   | one-shot         |
-| Solve (1 sec time limit)                        | 39 ms    | depends on model |
+| Operation                                       | Time       | Per unit           |
+| ----------------------------------------------- | ---------- | ------------------ |
+| Create 1000 int vars                            | < 1 ms     | < 1 µs / var       |
+| Build 1M expression nodes                       | 190–240 ms | ~190–240 ns / node |
+| `close` (Hexaly model compilation)              | 540–800 ms | one-shot           |
+| Solve (1 sec time limit)                        | 40–60 ms   | depends on model   |
 
-For comparison, ctypes-style FFI typically clocks at ~1 µs / call, and
-the cpython binding sits around ~600 ns. The hot path here is hand-
-written C stubs with batched `create_expression`, so a sum over 1000
-operands crosses FFI exactly once.
+Expression construction goes through hand-written C stubs with a batched
+`create_expression`, so a sum over 1000 operands crosses the FFI once.
 
 Reproduce on your machine:
 ```sh
@@ -230,13 +235,13 @@ dune exec bench/build_million.exe
 OCaml user code
    │  one record + custom-block per derived handle
    ▼
-src/hexaly.ml + .mli              Idiomatic API + Error / State / Status /
+src/hexaly.ml + .mli              OCaml API + Error / State / Status /
    │                              Op / Callback_type / Inconsistency /
    │                              Phase / Version / Syntax modules
    ▼
 src/hexaly_stubs.c                OCaml↔C glue: custom blocks, finalizers,
    │                              typed-exception raising, callback trampoline
-   │                              with proper runtime-lock dance
+   │                              that takes the OCaml runtime lock
    ▼
 src/hexaly_shim_{real,mock}.cpp   extern "C" surface; catches every C++
    │                              exception into a thread-local (code, msg);
@@ -245,84 +250,73 @@ src/hexaly_shim_{real,mock}.cpp   extern "C" surface; catches every C++
 libhexaly14X.dylib / .so / .dll   Shipped with the Hexaly install
 ```
 
-**Why four layers and not three?** Hexaly is C++ only — there is no C
-ABI. So a thin `extern "C"` shim is required regardless of which OCaml
-binding strategy you use. We added it; you got two extra benefits:
+**Why a C shim.** Hexaly is C++ only and has no C ABI, so any OCaml binding
+needs a thin `extern "C"` layer. It also gives two other things:
 
-1. C++ exceptions get caught before they can corrupt the OCaml stack.
-2. A self-contained mock backend slots into the same ABI, so CI and
-   contributors without a Hexaly license can still build and test.
+1. C++ exceptions are caught before they can reach the OCaml stack.
+2. A self-contained mock backend implements the same ABI, so CI and
+   contributors without a Hexaly license can build and test.
 
-**Lifetime safety.** Each derived handle (`model`, `param`, `solution`,
-`expr`, `Inconsistency.t`, `Phase.t`, `callback`) is an OCaml record
-carrying its parent. The compiler's reachability analysis enforces the
-chain — drop the optimizer and everything dies cleanly; hold any
-descendant and the whole tree survives. This costs one extra word per
-handle and eliminates the most common use-after-free in C bindings.
+**Lifetimes.** Each derived handle (`model`, `param`, `solution`, `expr`,
+`Inconsistency.t`, `Phase.t`, `callback`) is an OCaml record that holds its
+parent. Holding any descendant keeps the optimizer alive; once nothing
+refers to the optimizer or its descendants, the GC frees all of them. The
+optimizer owns its callbacks, so a callback whose closure captures the
+optimizer does not keep it alive.
 
-**Callbacks across threads.** `solve` releases the OCaml runtime lock
-so other OCaml threads can run and so Hexaly worker threads can safely
-re-enter OCaml via the callback trampoline. The trampoline registers
-the calling thread with the OCaml runtime (idempotent), acquires the
-lock, calls the closure with `caml_callback_exn`, releases the lock.
-Closures that raise are suppressed with a stderr warning — they can't
-escape into Hexaly's C++ code.
+**Callbacks across threads.** `solve` releases the OCaml runtime lock so
+other OCaml threads can run and so Hexaly threads can call back into OCaml.
+The trampoline registers the calling thread with the OCaml runtime,
+acquires the lock, calls the closure with `caml_callback_exn` and releases
+the lock. An exception raised by a closure is printed to stderr and
+dropped, because it cannot propagate through Hexaly's C++ code. Do not call
+`remove_callback` from inside a callback.
 
-For the in-depth design rationale (including how `HxOperator` drift is
-caught at compile time, how the build picks the right library across
-platforms, and how the `static_assert` sentinels work), see
-[`docs/design.md`](docs/design.md).
+For the design rationale (how `HxOperator` drift is caught at compile time,
+how the build picks the library on each platform, and how the
+`static_assert` sentinels work), see [`docs/design.md`](docs/design.md).
 
 ## Documentation
 
 - [API reference (odoc)](https://aalok-thakkar.github.io/ocaml-hexaly)
-- [Design notes](docs/design.md) — architecture, lifetime invariants,
-  callback runtime-lock dance, ABI drift defense, cross-platform build.
+- [Design notes](docs/design.md): architecture, lifetime invariants,
+  callback locking, ABI drift checks, cross-platform build.
 - [Changelog](CHANGELOG.md)
 - [Contributing guide](CONTRIBUTING.md)
 
-## How does it compare?
+## Comparison with the official bindings
 
-Hexaly itself has official bindings for Python, Java, C#, and C++.
-This binding mirrors the same modeling surface in OCaml. Things that
-distinguish it from those:
+Hexaly has official bindings for Python, Java, C# and C++. This binding
+covers the same modeling surface in OCaml, with these differences:
 
-- **Static typing**: every operator, every parameter, every error is
-  typed. The compiler catches model-building mistakes the Python
-  binding would defer to runtime.
-- **GC-aware lifetimes**: you cannot construct a dangling expression
-  reference. Compare to C++ where it's your job to keep the optimizer
-  alive while expressions exist.
-- **A real testing story without a license**: the mock backend lets
-  contributors and CI run a meaningful subset of the suite without
-  Hexaly installed. Java/Python/C++ bindings cannot offer this — they
-  need Hexaly to compile at all.
+- **Static typing.** Operators, parameters and errors are typed, so some
+  model-building mistakes that Python reports at runtime are compile
+  errors here.
+- **GC-managed lifetimes.** An expression cannot outlive its optimizer. In
+  C++ you keep the optimizer alive yourself.
+- **Testing without a license.** The mock backend lets CI and contributors
+  run most of the suite without Hexaly installed.
 
-Things the official bindings have that this doesn't yet:
+### Not yet bound
 
-- `lambdaFunction` / `range` (the Pythonic `m.array(m.range(0, n), λ i. ...)`
-  TSP idiom — see the unrolled TSP example for the workaround).
-- `HxExternalFunction` (custom evaluators called per-iteration).
-
-Both can be added; neither blocks 80% of production use cases.
+- `lambdaFunction` / `range` (the Python `m.array(m.range(0, n), lambda i: ...)`
+  TSP idiom). The TSP example unrolls the sum instead.
+- `HxExternalFunction` (custom evaluators called per iteration).
 
 ## Roadmap
 
-- 0.2.0 — `HxExternalFunction`, `lambdaFunction` + `range` (closes the
-  TSP-unroll gap).
-- 0.3.0 — More tuning helpers (Hexaly Studio import, surrogate parameters,
-  named param accessors).
-- 1.0.0 — API freeze after a stability window.
+- 0.2.0: `HxExternalFunction`, `lambdaFunction` and `range`.
+- 0.3.0: more tuning helpers (Hexaly Studio import, surrogate parameters,
+  named parameter accessors).
+- 1.0.0: API freeze after a stability window.
 
 ## Contributing
 
-Pull requests welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
-extension recipe across the four layers and notes on handling Hexaly
-version drift.
+Pull requests welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to
+extend each of the four layers and how to handle Hexaly version changes.
 
-If you're using this in production, please open an issue and tell us
-what's working and what isn't — the API stabilization for 1.0.0 will be
-guided by real usage.
+If you use this binding, please open an issue saying what works and what
+does not; that feedback will guide the 1.0.0 API.
 
 ## License
 
@@ -330,11 +324,9 @@ This binding is MIT licensed (see [`LICENSE`](LICENSE)).
 
 The Hexaly Optimizer itself is proprietary and requires a separate license
 from <https://www.hexaly.com/>. Free academic and trial licenses are
-available; no commercial license is required to use this OCaml binding,
-only to use the underlying solver.
+available. The OCaml binding needs no license; the solver does.
 
 ## Acknowledgments
 
-Built on top of Hexaly's mature C++ optimizer. Thanks to the Hexaly team
-for the comprehensive C++ documentation that made the binding
-verifiable end-to-end.
+Thanks to the Hexaly team for the C++ documentation the binding was checked
+against.

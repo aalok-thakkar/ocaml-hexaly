@@ -323,6 +323,7 @@ extern "C" hxs_error_code hxs_last_error_code(void) { return g_last_error_code; 
 extern "C" void           hxs_clear_error(void)     { clear_error(); }
 
 /* ---------- Version (faked) ---------- */
+extern "C" int  hxs_backend_is_mock(void)    { return 1; }
 extern "C" int  hxs_version_major(void)      { return 14; }
 extern "C" int  hxs_version_minor(void)      { return 5; }
 extern "C" int  hxs_version_code(void)       { return 1405; }
@@ -490,7 +491,7 @@ extern "C" hxs_solution_status hxs_solution_get_status(hxs_solution* s) {
     return (hxs_solution_status)s->m->status;
 }
 extern "C" int hxs_solution_is_violated(hxs_solution* s, hxs_expression* e) {
-    if (!s->m->solved) return -1;
+    if (!s->m->solved) { set_error(HXS_EC_API, "solution not available"); return -1; }
     return eval_int(e->e, s->m->assignment) == 0 ? 1 : 0;
 }
 extern "C" int hxs_solution_is_undefined(hxs_solution*, hxs_expression*) { return 0; }
