@@ -17,7 +17,7 @@ Features:
 - A bundled mock backend so the library builds and the test suite runs without a Hexaly install (useful for CI and contributors without a license).
 
 The Hexaly Optimizer itself is proprietary; obtain a free academic license, 30-day trial, or commercial license from https://www.hexaly.com/."""
-maintainer: ["Aalok Thakkar"]
+maintainer: ["Aalok Thakkar <thakkar@ashoka.edu.in>"]
 authors: ["Aalok Thakkar"]
 license: "MIT"
 tags: [

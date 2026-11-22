@@ -8,7 +8,7 @@
 (source (github aalok-thakkar/ocaml-hexaly))
 (license MIT)
 (authors "Aalok Thakkar")
-(maintainers "Aalok Thakkar")
+(maintainers "Aalok Thakkar <thakkar@ashoka.edu.in>")
 (documentation "https://aalok-thakkar.github.io/ocaml-hexaly")
 
 (package
