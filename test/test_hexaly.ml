@@ -12,7 +12,10 @@
  *   6. Cross-backend: same suite passes on real Hexaly and the mock;
  *      tests that need real-solver semantics skip on mock cleanly. *)
 
-let is_mock () = Sys.getenv_opt "HEXALY_BACKEND" = Some "mock"
+(* Ask the library which backend it was built with. The build picks the
+   mock when no Hexaly install is found, whether or not HEXALY_BACKEND is
+   set, so the environment variable alone does not tell us. *)
+let is_mock () = Hexaly.backend () = Hexaly.Mock
 let skip_on_mock () = if is_mock () then Alcotest.skip ()
 
 (* If no Hexaly license is reachable (real backend without a license
@@ -897,10 +900,16 @@ let test_callback_survives_dropped_handle () =
   Hexaly.solve o;
   Alcotest.(check int) "callback fired once" 1 !fired
 
+(* When HEXALY_BACKEND forces a backend, [backend ()] must report it.
+   Without the variable the build auto-detects, so there is nothing to
+   compare against. *)
 let test_backend_matches_env () =
-  let expected = if is_mock () then Hexaly.Mock else Hexaly.Real in
-  Alcotest.(check bool) "backend () matches HEXALY_BACKEND" true
-    (Hexaly.backend () = expected)
+  match Sys.getenv_opt "HEXALY_BACKEND" with
+  | Some "mock" ->
+    Alcotest.(check bool) "backend () is Mock" true (Hexaly.backend () = Hexaly.Mock)
+  | Some "real" ->
+    Alcotest.(check bool) "backend () is Real" true (Hexaly.backend () = Hexaly.Real)
+  | _ -> Alcotest.skip ()
 
 (* Regression: on the mock, a caught error used to leave a stale error
    behind, so the next [status] call raised it again. *)

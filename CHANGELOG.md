@@ -4,7 +4,23 @@ All notable changes to `ocaml-hexaly` will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-11-23
+
+Packaging fixes found by opam-repository CI. No API changes.
+
+### Fixed
+- Test suite: detect the mock backend with `Hexaly.backend ()` instead of
+  the `HEXALY_BACKEND` variable. A build that falls back to the mock
+  without that variable set (as in opam CI) ran real-solver-only tests
+  against the mock and failed.
+- Link the C++ runtime on every non-MSVC toolchain: `-lc++` on macOS and
+  the BSDs, `-lstdc++` elsewhere. It was previously added only when OCaml
+  reported `system = linux`, so linking failed on FreeBSD, mingw, and
+  Linux ppc64/s390x with OCaml 4.14.
+- Depend on `conf-c++`, so opam installs a C++ compiler where one is
+  missing (e.g. Cygwin).
+
+## [0.1.0] - 2026-11-22
 
 First release. Working binding for the Hexaly Optimizer 14.5 C++ API.
 
