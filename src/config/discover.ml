@@ -83,18 +83,18 @@ let find_lib_name lib_dir =
   | n :: _ -> Some n
   | []     -> None
 
-(* Pick the C++ standard library link flag for the host. *)
+(* Pick the C++ standard library link flag for the host. OCaml links
+   through the C compiler driver, which does not add the C++ runtime, so
+   every non-MSVC toolchain needs it named. macOS and the BSDs ship libc++;
+   other systems (Linux on any arch, mingw, Cygwin) use libstdc++. The
+   [system] value varies by OCaml version and arch (e.g. "elf" on Linux
+   ppc64/s390x for OCaml 4.14), so match the libc++ systems and default to
+   libstdc++. *)
 let cxx_runtime_flag c =
-  match C.ocaml_config_var c "system" with
-  | Some "macosx" -> ["-lc++"]
-  | Some "linux"
-  | Some "linux_eabi"
-  | Some "linux_eabihf" -> ["-lstdc++"]
-  | Some "mingw64"
-  | Some "mingw"
-  | Some "win32"
-  | Some "win64"        -> [] (* MSVC links its own; mingw links libstdc++ automatically *)
-  | _ -> []
+  match C.ocaml_config_var c "ccomp_type", C.ocaml_config_var c "system" with
+  | Some "msvc", _ -> []
+  | _, Some ("macosx" | "freebsd" | "openbsd" | "dragonfly") -> ["-lc++"]
+  | _ -> ["-lstdc++"]
 
 let rpath_flag c lib_dir =
   match C.ocaml_config_var c "system" with

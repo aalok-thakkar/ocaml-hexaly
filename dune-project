@@ -1,6 +1,6 @@
 (lang dune 3.0)
 (name hexaly)
-(version 0.1.0)
+(version 0.1.1)
 
 (generate_opam_files true)
 (implicit_transitive_deps false)
@@ -38,6 +38,7 @@ The Hexaly Optimizer itself is proprietary; obtain a free academic license, \
   (ocaml (>= 4.14))
   (dune (>= 3.0))
   dune-configurator
+  conf-c++
   (alcotest (and (>= 1.5) :with-test))
   (fmt (and (>= 0.9) :with-test))
   (odoc :with-doc))

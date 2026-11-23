@@ -57,7 +57,7 @@ Array.iter (Printf.printf " %d") tour
 | Tests                        | 77 alcotest cases (real) / 56 (mock)      |
 | Tested platforms             | macOS arm64 (real and mock); Linux and macOS in CI (mock) |
 | Windows                      | The configurator looks for Windows installs; untested |
-| API stability                | 0.1.0, pre-1.0; expect additions          |
+| API stability                | 0.1.1, pre-1.0; expect additions          |
 
 ## Installation
 
