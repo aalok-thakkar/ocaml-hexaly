@@ -13,30 +13,22 @@
 
 (package
  (name hexaly)
- (synopsis
-   "OCaml bindings for Hexaly Optimizer (interval, list, set variables included)")
+ (synopsis "OCaml bindings for the Hexaly Optimizer")
  (description
-   "Idiomatic OCaml interface to the Hexaly Optimizer (formerly LocalSolver), a commercial \
-mathematical optimization solver. Binds the C++ HexalyOptimizer/HxModel/HxExpression API \
-through a thin extern \"C\" shim and hand-written OCaml C stubs for near-zero per-call \
-overhead.\n\
+   "Bindings to the C++ API of the Hexaly Optimizer (formerly LocalSolver), a \
+commercial optimization solver. Covers boolean, integer, float, interval, list \
+and set decision variables, the expression operators, multi-objective phases, \
+callbacks, and inconsistency analysis.\n\
 \n\
-Features:\n\
-- Bool, int, float, interval, list, and set decision variables.\n\
-- Full arithmetic, math, logical, comparison, array, and scheduling operators.\n\
-- Lexicographic multi-objective optimization via HxPhase.\n\
-- Callbacks with proper OCaml runtime-lock handling for solver-worker threads.\n\
-- Typed errors (Hexaly_error of Error.code * string) mirroring HxErrorCode.\n\
-- Inconsistency analysis (IIS) for diagnosing infeasible models.\n\
-- Warm-start hints via initial-solution setters.\n\
-- A bundled mock backend so the library builds and the test suite runs \
-without a Hexaly install (useful for CI and contributors without a license).\n\
-\n\
-The Hexaly Optimizer itself is proprietary; obtain a free academic license, \
-30-day trial, or commercial license from https://www.hexaly.com/.")
+Hexaly is proprietary and is not installed by this package. Get a license \
+(academic, trial or commercial) from https://www.hexaly.com/ and point \
+HEXALY_HOME at the install. If no install is found, the package builds a \
+small brute-force mock instead, so that it compiles and its tests run without \
+Hexaly. The mock is not a solver: Hexaly.create prints a warning when it is \
+in use (unless HEXALY_BACKEND=mock), Hexaly.backend () reports which backend was built, and setting \
+HEXALY_BACKEND=real makes the build fail instead of falling back.")
  (depends
   (ocaml (>= 4.14))
-  (dune (>= 3.0))
   dune-configurator
   conf-c++
   (alcotest (and (>= 1.5) :with-test))
